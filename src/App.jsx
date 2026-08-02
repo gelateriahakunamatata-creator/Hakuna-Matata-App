@@ -189,8 +189,10 @@ function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
 // turno. Un giorno senza turno a calendario conta interamente come straordinario,
 // perché non esiste un orario di riferimento con cui confrontare la timbratura —
 // eccetto per i dipendenti a orario libero (es. laboratorio), per cui non esiste
-// proprio il concetto di turno: il tempo timbrato dal martedì al sabato è ore
-// standard, quello timbrato di domenica o lunedì è sempre straordinario.
+// proprio il concetto di turno: dal martedì al sabato le prime 6 ore timbrate
+// sono standard e l'eventuale eccedenza è straordinario; di domenica e lunedì
+// è sempre tutto straordinario.
+const FLEXIBLE_DAILY_STANDARD_HOURS = 6;
 function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexible, monthStartTs) {
   const standard = {};
   const overtime = {};
@@ -207,8 +209,10 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
       const total = Math.max(0, (act.end - act.start) / 3600000);
       const weekday = new Date(monthDate.getFullYear(), monthDate.getMonth(), d).getDay(); // 0=Dom, 1=Lun, ..., 6=Sab
       const isStandardDay = weekday >= 2 && weekday <= 6; // Mar-Sab
-      standard[d] = isStandardDay ? Math.round(total * 100) / 100 : 0;
-      overtime[d] = isStandardDay ? 0 : Math.round(total * 100) / 100;
+      const std = isStandardDay ? Math.min(total, FLEXIBLE_DAILY_STANDARD_HOURS) : 0;
+      const ot = isStandardDay ? Math.max(0, total - FLEXIBLE_DAILY_STANDARD_HOURS) : total;
+      standard[d] = Math.round(std * 100) / 100;
+      overtime[d] = Math.round(ot * 100) / 100;
       continue;
     }
     if (!sched) {
