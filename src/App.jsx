@@ -377,7 +377,7 @@ export default function App() {
   const [adminAuthed, setAdminAuthed] = useState(false);
   const [adminErr, setAdminErr] = useState("");
   const [toast, setToast] = useState(null);
-  const [newEmp, setNewEmp] = useState({ name: "", store: "origini", pin: "", flexible: false });
+  const [newEmp, setNewEmp] = useState({ name: "", store: "origini", pin: "", flexible: false, contractHours: "" });
   const [addingEmp, setAddingEmp] = useState(false);
   const [myHoursTarget, setMyHoursTarget] = useState(null); // employee whose PIN matched
   const [myHoursPinError, setMyHoursPinError] = useState("");
@@ -524,9 +524,17 @@ export default function App() {
 
   const addEmployee = async () => {
     if (!newEmp.name.trim() || newEmp.pin.length !== 4) return;
-    const entry = { id: uid(), name: newEmp.name.trim(), store: newEmp.store, pin: newEmp.pin, active: true, flexible: newEmp.flexible };
+    const entry = {
+      id: uid(),
+      name: newEmp.name.trim(),
+      store: newEmp.store,
+      pin: newEmp.pin,
+      active: true,
+      flexible: newEmp.flexible,
+      contractHours: newEmp.contractHours ? Number(newEmp.contractHours) : null,
+    };
     await saveEmployees([...(employees || []), entry]);
-    setNewEmp({ name: "", store: newEmp.store, pin: "", flexible: false });
+    setNewEmp({ name: "", store: newEmp.store, pin: "", flexible: false, contractHours: "" });
     setAddingEmp(false);
   };
 
@@ -741,7 +749,9 @@ export default function App() {
                   <div>
                     <p className="font-normal text-sm" style={{ color: "#000" }}>{emp.name}</p>
                     <p className="text-[11px] font-normal" style={{ color: "#000" }}>
-                      {STORE_META[emp.store].label} · PIN {emp.pin}{emp.flexible ? " · Orario libero" : ""}
+                      {STORE_META[emp.store].label} · PIN {emp.pin}
+                      {emp.flexible ? " · Orario libero" : ""}
+                      {emp.contractHours ? ` · ${emp.contractHours}h/sett. da contratto` : ""}
                     </p>
                   </div>
                 </div>
@@ -790,6 +800,14 @@ export default function App() {
                 onChange={(e) => setNewEmp((v) => ({ ...v, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
                 placeholder="PIN a 4 cifre"
                 inputMode="numeric"
+                className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
+                style={{ background: C.sand, color: "#000" }}
+              />
+              <input
+                value={newEmp.contractHours}
+                onChange={(e) => setNewEmp((v) => ({ ...v, contractHours: e.target.value.replace(/[^0-9.]/g, "") }))}
+                placeholder="Ore da contratto a settimana (facoltativo)"
+                inputMode="decimal"
                 className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
                 style={{ background: C.sand, color: "#000" }}
               />
