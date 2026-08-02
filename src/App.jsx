@@ -28,6 +28,10 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+// Soglia oltre la quale un ingresso senza uscita viene segnalato in Gestione
+// come probabile timbratura di uscita dimenticata.
+const FORGOTTEN_CLOCKOUT_HOURS = 12;
+
 // Stable per-employee colors for the shift calendar, so the same person always
 // gets the same color no matter the order employees were added/removed.
 const EMPLOYEE_COLORS = [
@@ -238,6 +242,21 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
     overtime[d] = Math.round(ot * 100) / 100;
   }
   return { standard, overtime };
+}
+// Raggruppa le ore (standard + straordinario) per settimana (Lun-Dom), per
+// confrontarle con le ore da contratto settimanali di un dipendente.
+function weeklyTotalsForMonth(standard, overtime, monthStartTs, totalDays) {
+  const monthDate = new Date(monthStartTs);
+  const weeks = {};
+  for (let d = 1; d <= totalDays; d++) {
+    const ts = dayTs(monthDate.getFullYear(), monthDate.getMonth(), d);
+    const weekStart = startOfWeek(ts);
+    const total = (standard[d] || 0) + (overtime[d] || 0);
+    weeks[weekStart] = (weeks[weekStart] || 0) + total;
+  }
+  return Object.entries(weeks)
+    .map(([weekStart, total]) => ({ weekStart: Number(weekStart), total: Math.round(total * 100) / 100 }))
+    .sort((a, b) => a.weekStart - b.weekStart);
 }
 function exportEmployeeMonthCSV(employee, punches, shifts, monthStartTs) {
   const actualBounds = actualBoundsForMonth(punches, employee.id, monthStartTs);
@@ -740,6 +759,26 @@ export default function App() {
             </button>
           </div>
 
+          {(() => {
+            const stuckIn = employees.filter((e) => {
+              const last = lastPunchFor(e.id);
+              return last && last.type === "in" && Date.now() - last.timestamp > FORGOTTEN_CLOCKOUT_HOURS * 3600000;
+            });
+            if (stuckIn.length === 0) return null;
+            return (
+              <div className="rounded-2xl p-3.5 mb-3" style={{ background: "#fff", border: `2px solid ${C.terracotta}` }}>
+                <p className="text-xs font-normal mb-1" style={{ color: C.terracotta }}>
+                  ⚠ Forse hanno dimenticato di timbrare l'uscita (ancora "dentro" da oltre {FORGOTTEN_CLOCKOUT_HOURS} ore):
+                </p>
+                {stuckIn.map((e) => (
+                  <p key={e.id} className="text-xs font-normal" style={{ color: "#000" }}>
+                    {e.name} — dentro dalle {fmtTime(lastPunchFor(e.id).timestamp)} del {fmtDate(lastPunchFor(e.id).timestamp)}
+                  </p>
+                ))}
+              </div>
+            );
+          })()}
+
           <div className="space-y-2.5">
             {employees.length === 0 && (
               <p className="text-sm font-normal text-center py-4" style={{ color: "#000" }}>Nessun dipendente ancora. Aggiungine uno qui sotto.</p>
@@ -859,7 +898,13 @@ export default function App() {
                     >
                       <Pencil size={15} color={C.espresso} />
                     </button>
-                    <button onClick={() => removeEmployee(emp.id)} className="p-2 rounded-full" style={{ background: C.sand }}>
+                    <button
+                      onClick={() => {
+                        if (window.confirm(`Eliminare ${emp.name}? L'operazione non si può annullare.`)) removeEmployee(emp.id);
+                      }}
+                      className="p-2 rounded-full"
+                      style={{ background: C.sand }}
+                    >
                       <Trash2 size={15} color={C.terracotta} />
                     </button>
                   </div>
@@ -1426,6 +1471,33 @@ function ChangeAdminPin({ current, onSave }) {
   );
 }
 
+// Confronta, settimana per settimana, le ore timbrate con le ore da contratto
+// di un dipendente — usato sia nella vista admin (Presenze) sia in quella
+// personale (Le mie ore). Non mostra nulla se il dipendente non ha ore da
+// contratto impostate.
+function WeeklyContractComparison({ standard, overtime, monthStart, total, contractHours }) {
+  if (!contractHours) return null;
+  const weeks = weeklyTotalsForMonth(standard, overtime, monthStart, total);
+  return (
+    <div className="mt-3 pt-3" style={{ borderTop: `1.5px dashed ${C.sandDeep}` }}>
+      <p className="text-[10px] font-normal mb-1" style={{ color: C.maroon }}>
+        Ore a settimana vs contratto ({contractHours}h/sett.)
+      </p>
+      {weeks.map((w) => {
+        const delta = Math.round((w.total - contractHours) * 100) / 100;
+        return (
+          <div key={w.weekStart} className="flex items-center justify-between text-[11px] font-mono font-normal" style={{ color: "#000" }}>
+            <span>Sett. dal {new Date(w.weekStart).toLocaleDateString("it-IT", { day: "2-digit", month: "2-digit" })}</span>
+            <span style={{ color: delta < 0 ? C.terracotta : delta > 0 ? C.sky : "#000" }}>
+              {w.total.toFixed(2).replace(".", ",")}h ({delta >= 0 ? "+" : ""}{delta.toFixed(2).replace(".", ",")})
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function MyHoursView({ employee, punches, shifts, onBack }) {
   const [monthStart, setMonthStart] = useState(startOfMonth(Date.now()));
   const actualBounds = actualBoundsForMonth(punches, employee.id, monthStart);
@@ -1499,6 +1571,13 @@ function MyHoursView({ employee, punches, shifts, onBack }) {
             ))}
           </>
         )}
+        <WeeklyContractComparison
+          standard={standard}
+          overtime={overtime}
+          monthStart={monthStart}
+          total={total}
+          contractHours={employee.contractHours}
+        />
       </div>
     </div>
   );
@@ -1680,6 +1759,14 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule,
                   ))}
                 </div>
               )}
+
+              <WeeklyContractComparison
+                standard={standard}
+                overtime={overtime}
+                monthStart={monthStart}
+                total={total}
+                contractHours={emp.contractHours}
+              />
 
               <button
                 onClick={() => exportEmployeeMonthCSV(emp, punches, shifts, monthStart)}
