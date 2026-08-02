@@ -189,10 +189,12 @@ function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
 // turno. Un giorno senza turno a calendario conta interamente come straordinario,
 // perché non esiste un orario di riferimento con cui confrontare la timbratura —
 // eccetto per i dipendenti a orario libero (es. laboratorio), per cui non esiste
-// proprio il concetto di turno: tutto il tempo timbrato è sempre ore standard.
-function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexible) {
+// proprio il concetto di turno: il tempo timbrato dal martedì al sabato è ore
+// standard, quello timbrato di domenica o lunedì è sempre straordinario.
+function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexible, monthStartTs) {
   const standard = {};
   const overtime = {};
+  const monthDate = monthStartTs != null ? new Date(monthStartTs) : null;
   for (let d = 1; d <= totalDays; d++) {
     const act = actualBounds[d];
     const sched = scheduledBounds[d];
@@ -203,8 +205,10 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
     }
     if (flexible) {
       const total = Math.max(0, (act.end - act.start) / 3600000);
-      standard[d] = Math.round(total * 100) / 100;
-      overtime[d] = 0;
+      const weekday = new Date(monthDate.getFullYear(), monthDate.getMonth(), d).getDay(); // 0=Dom, 1=Lun, ..., 6=Sab
+      const isStandardDay = weekday >= 2 && weekday <= 6; // Mar-Sab
+      standard[d] = isStandardDay ? Math.round(total * 100) / 100 : 0;
+      overtime[d] = isStandardDay ? 0 : Math.round(total * 100) / 100;
       continue;
     }
     if (!sched) {
@@ -235,7 +239,7 @@ function exportEmployeeMonthCSV(employee, punches, shifts, monthStartTs) {
   const actualBounds = actualBoundsForMonth(punches, employee.id, monthStartTs);
   const scheduledBounds = scheduledBoundsForMonth(shifts, employee.id, monthStartTs);
   const total = daysInMonth(monthStartTs);
-  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible);
+  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible, monthStartTs);
   const monthDate = new Date(monthStartTs);
   const rows = ["Giorno;Ore standard;Straordinari;Totale"];
   let sumStd = 0;
@@ -1296,7 +1300,7 @@ function MyHoursView({ employee, punches, shifts, onBack }) {
   const actualBounds = actualBoundsForMonth(punches, employee.id, monthStart);
   const scheduledBounds = scheduledBoundsForMonth(shifts, employee.id, monthStart);
   const total = daysInMonth(monthStart);
-  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible);
+  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible, monthStart);
   const workedDays = Array.from({ length: total }, (_, i) => i + 1).filter(
     (d) => (standard[d] || 0) > 0 || (overtime[d] || 0) > 0
   );
@@ -1504,7 +1508,7 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule,
           const actualBounds = actualBoundsForMonth(punches, emp.id, monthStart);
           const scheduledBounds = scheduledBoundsForMonth(shifts, emp.id, monthStart);
           const total = daysInMonth(monthStart);
-          const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, emp.flexible);
+          const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, emp.flexible, monthStart);
           const workedDays = Array.from({ length: total }, (_, i) => i + 1).filter(
             (d) => (standard[d] || 0) > 0 || (overtime[d] || 0) > 0
           );
