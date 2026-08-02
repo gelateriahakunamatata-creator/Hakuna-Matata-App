@@ -187,8 +187,10 @@ function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
 // né ore standard né straordinario per quei minuti, restano semplicemente fuori
 // dal conteggio. Lo straordinario è solo il tempo timbrato dopo l'orario di fine
 // turno. Un giorno senza turno a calendario conta interamente come straordinario,
-// perché non esiste un orario di riferimento con cui confrontare la timbratura.
-function splitStandardOvertime(actualBounds, scheduledBounds, totalDays) {
+// perché non esiste un orario di riferimento con cui confrontare la timbratura —
+// eccetto per i dipendenti a orario libero (es. laboratorio), per cui non esiste
+// proprio il concetto di turno: tutto il tempo timbrato è sempre ore standard.
+function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexible) {
   const standard = {};
   const overtime = {};
   for (let d = 1; d <= totalDays; d++) {
@@ -196,6 +198,12 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays) {
     const sched = scheduledBounds[d];
     if (!act) {
       standard[d] = 0;
+      overtime[d] = 0;
+      continue;
+    }
+    if (flexible) {
+      const total = Math.max(0, (act.end - act.start) / 3600000);
+      standard[d] = Math.round(total * 100) / 100;
       overtime[d] = 0;
       continue;
     }
@@ -227,7 +235,7 @@ function exportEmployeeMonthCSV(employee, punches, shifts, monthStartTs) {
   const actualBounds = actualBoundsForMonth(punches, employee.id, monthStartTs);
   const scheduledBounds = scheduledBoundsForMonth(shifts, employee.id, monthStartTs);
   const total = daysInMonth(monthStartTs);
-  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total);
+  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible);
   const monthDate = new Date(monthStartTs);
   const rows = ["Giorno;Ore standard;Straordinari;Totale"];
   let sumStd = 0;
@@ -361,7 +369,7 @@ export default function App() {
   const [adminAuthed, setAdminAuthed] = useState(false);
   const [adminErr, setAdminErr] = useState("");
   const [toast, setToast] = useState(null);
-  const [newEmp, setNewEmp] = useState({ name: "", store: "origini", pin: "" });
+  const [newEmp, setNewEmp] = useState({ name: "", store: "origini", pin: "", flexible: false });
   const [addingEmp, setAddingEmp] = useState(false);
   const [myHoursTarget, setMyHoursTarget] = useState(null); // employee whose PIN matched
   const [myHoursPinError, setMyHoursPinError] = useState("");
@@ -508,9 +516,9 @@ export default function App() {
 
   const addEmployee = async () => {
     if (!newEmp.name.trim() || newEmp.pin.length !== 4) return;
-    const entry = { id: uid(), name: newEmp.name.trim(), store: newEmp.store, pin: newEmp.pin, active: true };
+    const entry = { id: uid(), name: newEmp.name.trim(), store: newEmp.store, pin: newEmp.pin, active: true, flexible: newEmp.flexible };
     await saveEmployees([...(employees || []), entry]);
-    setNewEmp({ name: "", store: newEmp.store, pin: "" });
+    setNewEmp({ name: "", store: newEmp.store, pin: "", flexible: false });
     setAddingEmp(false);
   };
 
@@ -724,7 +732,9 @@ export default function App() {
                   />
                   <div>
                     <p className="font-normal text-sm" style={{ color: "#000" }}>{emp.name}</p>
-                    <p className="text-[11px] font-normal" style={{ color: "#000" }}>{STORE_META[emp.store].label} · PIN {emp.pin}</p>
+                    <p className="text-[11px] font-normal" style={{ color: "#000" }}>
+                      {STORE_META[emp.store].label} · PIN {emp.pin}{emp.flexible ? " · Orario libero" : ""}
+                    </p>
                   </div>
                 </div>
                 <button onClick={() => removeEmployee(emp.id)} className="p-2 rounded-full" style={{ background: C.sand }}>
@@ -775,6 +785,17 @@ export default function App() {
                 className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
                 style={{ background: C.sand, color: "#000" }}
               />
+              <label className="flex items-center gap-2.5 px-1 py-1">
+                <input
+                  type="checkbox"
+                  checked={newEmp.flexible}
+                  onChange={(e) => setNewEmp((v) => ({ ...v, flexible: e.target.checked }))}
+                  className="w-4 h-4"
+                />
+                <span className="text-xs font-normal" style={{ color: "#000" }}>
+                  Orario libero (es. laboratorio): niente turni fissi, le ore timbrate contano sempre come standard
+                </span>
+              </label>
               <div className="flex gap-2">
                 <button
                   onClick={() => setAddingEmp(false)}
@@ -1275,7 +1296,7 @@ function MyHoursView({ employee, punches, shifts, onBack }) {
   const actualBounds = actualBoundsForMonth(punches, employee.id, monthStart);
   const scheduledBounds = scheduledBoundsForMonth(shifts, employee.id, monthStart);
   const total = daysInMonth(monthStart);
-  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total);
+  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible);
   const workedDays = Array.from({ length: total }, (_, i) => i + 1).filter(
     (d) => (standard[d] || 0) > 0 || (overtime[d] || 0) > 0
   );
@@ -1483,7 +1504,7 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule,
           const actualBounds = actualBoundsForMonth(punches, emp.id, monthStart);
           const scheduledBounds = scheduledBoundsForMonth(shifts, emp.id, monthStart);
           const total = daysInMonth(monthStart);
-          const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total);
+          const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, emp.flexible);
           const workedDays = Array.from({ length: total }, (_, i) => i + 1).filter(
             (d) => (standard[d] || 0) > 0 || (overtime[d] || 0) > 0
           );
