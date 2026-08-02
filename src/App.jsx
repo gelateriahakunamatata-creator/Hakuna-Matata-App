@@ -455,6 +455,22 @@ export default function App() {
     }
   };
 
+  // Lets an admin backfill a clock-in/clock-out pair for a day an employee
+  // couldn't punch themselves (e.g. app was down), so it counts in their hours
+  // exactly like a normal punch would.
+  const addManualPunch = async (employeeId, dayIso, startTime, endTime) => {
+    const [y, m, d] = dayIso.split("-").map(Number);
+    const dayStart = dayTs(y, m - 1, d);
+    const [sh, sm] = startTime.split(":").map(Number);
+    const [eh, em] = endTime.split(":").map(Number);
+    const inTs = dayStart + (sh * 60 + sm) * 60000;
+    let outTs = dayStart + (eh * 60 + em) * 60000;
+    if (outTs <= inTs) outTs += 24 * 60 * 60000;
+    const inEntry = { id: uid(), employeeId, type: "in", timestamp: inTs };
+    const outEntry = { id: uid(), employeeId, type: "out", timestamp: outTs };
+    await savePunches([...punches, inEntry, outEntry]);
+  };
+
   const lastPunchFor = (empId) => {
     const mine = punches.filter((p) => p.employeeId === empId).sort((a, b) => b.timestamp - a.timestamp);
     return mine[0] || null;
@@ -788,7 +804,7 @@ export default function App() {
 
       {/* REPORT */}
       {screen === "report" && adminAuthed && (
-        <ReportView employees={employees} punches={punches} shifts={shifts} onBackToAdmin={() => setScreen("admin")} onGoToSchedule={() => setScreen("schedule-admin")} />
+        <ReportView employees={employees} punches={punches} shifts={shifts} onBackToAdmin={() => setScreen("admin")} onGoToSchedule={() => setScreen("schedule-admin")} onAddManualPunch={addManualPunch} />
       )}
 
       {/* SCHEDULE - read-only view for employees, opened from the store screen */}
@@ -1332,8 +1348,13 @@ function MyHoursView({ employee, punches, shifts, onBack }) {
   );
 }
 
-function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule }) {
+function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule, onAddManualPunch }) {
   const [monthStart, setMonthStart] = useState(startOfMonth(Date.now()));
+  const [showManual, setShowManual] = useState(false);
+  const [manualEmp, setManualEmp] = useState("");
+  const [manualDay, setManualDay] = useState(isoDay(Date.now() - 24 * 60 * 60000));
+  const [manualStart, setManualStart] = useState("09:00");
+  const [manualEnd, setManualEnd] = useState("13:00");
 
   return (
     <div className="relative px-5 pb-16 max-w-md mx-auto">
@@ -1377,6 +1398,82 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule 
           mese succ. →
         </button>
       </div>
+
+      {!showManual ? (
+        <button
+          onClick={() => setShowManual(true)}
+          className="w-full mb-4 py-2.5 rounded-xl font-normal text-xs flex items-center justify-center gap-1.5"
+          style={{ background: C.sandLight, color: "#000", border: `2px dashed ${C.sandDeep}` }}
+        >
+          <Plus size={14} /> Aggiungi timbratura manuale
+        </button>
+      ) : (
+        <div className="mb-4 rounded-2xl p-4 space-y-3" style={{ background: "#fff", border: `2px solid ${C.sandDeep}` }}>
+          <p className="text-sm font-normal" style={{ color: "#000" }}>
+            Aggiungi timbratura manuale
+          </p>
+          <p className="text-[11px] font-normal" style={{ color: "#000" }}>
+            Usalo quando qualcuno non ha potuto timbrare: aggiunge ingresso e uscita come se li avesse fatti lui.
+          </p>
+          <select
+            value={manualEmp}
+            onChange={(e) => setManualEmp(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
+            style={{ background: C.sand, color: "#000" }}
+          >
+            <option value="">Scegli dipendente…</option>
+            {employees.map((e) => (
+              <option key={e.id} value={e.id}>{e.name} · {STORE_META[e.store].label}</option>
+            ))}
+          </select>
+          <input
+            type="date"
+            value={manualDay}
+            onChange={(e) => setManualDay(e.target.value)}
+            className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
+            style={{ background: C.sand, color: "#000" }}
+          />
+          <div className="flex gap-2 items-center">
+            <input
+              type="time"
+              value={manualStart}
+              onChange={(e) => setManualStart(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-xl font-normal text-sm outline-none"
+              style={{ background: C.sand, color: "#000" }}
+            />
+            <span className="font-normal text-xs" style={{ color: "#000" }}>–</span>
+            <input
+              type="time"
+              value={manualEnd}
+              onChange={(e) => setManualEnd(e.target.value)}
+              className="flex-1 px-3 py-2 rounded-xl font-normal text-sm outline-none"
+              style={{ background: C.sand, color: "#000" }}
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setShowManual(false)}
+              className="flex-1 py-2 rounded-xl font-normal text-sm"
+              style={{ background: C.sand, color: "#000" }}
+            >
+              Annulla
+            </button>
+            <button
+              onClick={async () => {
+                if (!manualEmp || !manualDay) return;
+                await onAddManualPunch(manualEmp, manualDay, manualStart, manualEnd);
+                setShowManual(false);
+                setManualEmp("");
+              }}
+              disabled={!manualEmp || !manualDay}
+              className="flex-1 py-2 rounded-xl font-normal text-sm disabled:opacity-40"
+              style={{ background: C.espresso, color: C.sandLight }}
+            >
+              Aggiungi
+            </button>
+          </div>
+        </div>
+      )}
 
       <div className="space-y-3">
         {employees.length === 0 && (
