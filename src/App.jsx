@@ -28,6 +28,27 @@ function uid() {
   return Math.random().toString(36).slice(2, 10) + Date.now().toString(36);
 }
 
+// Stable per-employee colors for the shift calendar, so the same person always
+// gets the same color no matter the order employees were added/removed.
+const EMPLOYEE_COLORS = [
+  "#4EC1E0", // sky
+  "#C24A34", // terracotta
+  "#8E6BB0", // lavender
+  "#7A8B4C", // olive
+  "#D98A3D", // amber
+  "#4C6B8B", // slate blue
+  "#B0526B", // rose
+  "#2E8B7A", // teal
+];
+function employeeColor(id) {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) {
+    hash = (hash << 5) - hash + id.charCodeAt(i);
+    hash |= 0;
+  }
+  return EMPLOYEE_COLORS[Math.abs(hash) % EMPLOYEE_COLORS.length];
+}
+
 function fmtTime(ts) {
   return new Date(ts).toLocaleTimeString("it-IT", { hour: "2-digit", minute: "2-digit" });
 }
@@ -680,9 +701,15 @@ export default function App() {
             )}
             {employees.map((emp) => (
               <div key={emp.id} className="rounded-2xl p-3.5 flex items-center justify-between" style={{ background: "#fff", border: `2px solid ${C.sandDeep}` }}>
-                <div>
-                  <p className="font-normal text-sm" style={{ color: "#000" }}>{emp.name}</p>
-                  <p className="text-[11px] font-normal" style={{ color: "#000" }}>{STORE_META[emp.store].label} · PIN {emp.pin}</p>
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className="w-3 h-3 rounded-full flex-shrink-0"
+                    style={{ background: employeeColor(emp.id) }}
+                  />
+                  <div>
+                    <p className="font-normal text-sm" style={{ color: "#000" }}>{emp.name}</p>
+                    <p className="text-[11px] font-normal" style={{ color: "#000" }}>{STORE_META[emp.store].label} · PIN {emp.pin}</p>
+                  </div>
                 </div>
                 <button onClick={() => removeEmployee(emp.id)} className="p-2 rounded-full" style={{ background: C.sand }}>
                   <Trash2 size={15} color={C.terracotta} />
@@ -1087,7 +1114,7 @@ function ScheduleCalendar({ store, employees, shifts, editable, onAddShift, onRe
           if (d === null) return <div key={i} />;
           const ts = dayTs(monthDate.getFullYear(), monthDate.getMonth(), d);
           const iso = isoDay(ts);
-          const count = (shiftsByDay[iso] || []).length;
+          const dayShifts = shiftsByDay[iso] || [];
           const isSelected = selectedDay === ts;
           return (
             <button
@@ -1100,11 +1127,16 @@ function ScheduleCalendar({ store, employees, shifts, editable, onAddShift, onRe
               }}
             >
               <span className="text-xs font-normal" style={{ color: isSelected ? C.sandLight : "#000" }}>{d}</span>
-              {count > 0 && (
-                <span
-                  className="absolute bottom-1 w-1.5 h-1.5 rounded-full"
-                  style={{ background: isSelected ? C.sky : C.sky }}
-                />
+              {dayShifts.length > 0 && (
+                <span className="absolute bottom-1 left-1/2 -translate-x-1/2 flex gap-0.5">
+                  {dayShifts.slice(0, 4).map((s) => (
+                    <span
+                      key={s.id}
+                      className="w-1.5 h-1.5 rounded-full"
+                      style={{ background: employeeColor(s.employeeId) }}
+                    />
+                  ))}
+                </span>
               )}
             </button>
           );
@@ -1123,7 +1155,11 @@ function ScheduleCalendar({ store, employees, shifts, editable, onAddShift, onRe
             <div className="space-y-1.5 mb-3">
               {selDayShifts.map((s) => (
                 <div key={s.id} className="flex items-center justify-between rounded-xl px-3 py-2" style={{ background: C.sand }}>
-                  <p className="text-xs font-normal" style={{ color: "#000" }}>
+                  <p className="text-xs font-normal flex items-center gap-2" style={{ color: "#000" }}>
+                    <span
+                      className="inline-block w-2.5 h-2.5 rounded-full flex-shrink-0"
+                      style={{ background: employeeColor(s.employeeId) }}
+                    />
                     {empName(s.employeeId)} <span className="font-mono font-normal" style={{ color: "#000" }}>· {s.start}–{s.end}</span>
                   </p>
                   {editable && (
