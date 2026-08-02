@@ -292,17 +292,20 @@ function PinPad({ title, subtitle, length = 4, onSubmit, onCancel, error }) {
             <X size={18} color={C.espresso} />
           </button>
         </div>
-        <div className="flex justify-center gap-3 my-5">
-          {Array.from({ length }).map((_, i) => (
-            <div
-              key={i}
-              className="w-4 h-4 rounded-full"
-              style={{
-                background: i < val.length ? C.espresso : "transparent",
-                border: `2px solid ${C.espresso}`,
-              }}
-            />
-          ))}
+        <div className="flex justify-center my-5">
+          <div
+            className="px-5 py-3 rounded-2xl font-mono text-2xl"
+            style={{
+              background: "#fff",
+              border: `2px solid ${C.sandDeep}`,
+              color: "#000",
+              minWidth: 160,
+              textAlign: "center",
+              letterSpacing: "0.3em",
+            }}
+          >
+            {val.padEnd(length, "•")}
+          </div>
         </div>
         {error && <p className="text-center text-sm font-normal mb-3" style={{ color: C.terracotta }}>{error}</p>}
         <div className="grid grid-cols-3 gap-2.5">
