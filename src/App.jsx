@@ -538,12 +538,11 @@ export default function App() {
           <div style={{ width: 34 }} />
         )}
         {screen === "home" && (
-          <p
-            className="font-normal text-2xl tracking-tight"
-            style={{ color: "#000", position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)" }}
-          >
-            HAKUNA MATATA
-          </p>
+          <img
+            src="/logo.png"
+            alt="Hakuna Matata"
+            style={{ position: "absolute", left: "50%", top: "50%", transform: "translate(-50%, -50%)", height: 64, width: "auto" }}
+          />
         )}
         {screen === "home" && (
           <button
