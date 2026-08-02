@@ -196,7 +196,13 @@ function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
 // proprio il concetto di turno: dal martedì al sabato le prime 6 ore timbrate
 // sono standard e l'eventuale eccedenza è straordinario; di domenica e lunedì
 // è sempre tutto straordinario.
+// In entrambi i casi, uno sforamento sotto i 15 minuti di tolleranza viene
+// perdonato (conta come standard); da 15 minuti in su scatta per intero.
 const FLEXIBLE_DAILY_STANDARD_HOURS = 6;
+const OVERTIME_GRACE_HOURS = 15 / 60;
+function graceAdjustedOvertime(rawOvertimeHours) {
+  return rawOvertimeHours < OVERTIME_GRACE_HOURS ? 0 : rawOvertimeHours;
+}
 function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexible, monthStartTs) {
   const standard = {};
   const overtime = {};
@@ -213,8 +219,9 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
       const total = Math.max(0, (act.end - act.start) / 3600000);
       const weekday = new Date(monthDate.getFullYear(), monthDate.getMonth(), d).getDay(); // 0=Dom, 1=Lun, ..., 6=Sab
       const isStandardDay = weekday >= 2 && weekday <= 6; // Mar-Sab
-      const std = isStandardDay ? Math.min(total, FLEXIBLE_DAILY_STANDARD_HOURS) : 0;
-      const ot = isStandardDay ? Math.max(0, total - FLEXIBLE_DAILY_STANDARD_HOURS) : total;
+      const rawOt = isStandardDay ? Math.max(0, total - FLEXIBLE_DAILY_STANDARD_HOURS) : total;
+      const ot = isStandardDay ? graceAdjustedOvertime(rawOt) : rawOt;
+      const std = isStandardDay ? total - ot : 0;
       standard[d] = Math.round(std * 100) / 100;
       overtime[d] = Math.round(ot * 100) / 100;
       continue;
@@ -235,9 +242,10 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
       overtime[d] = 0;
       continue;
     }
-    const stdEnd = Math.min(countedEnd, sched.end);
+    const rawOt = Math.max(0, (countedEnd - sched.end) / 3600000);
+    const ot = graceAdjustedOvertime(rawOt);
+    const stdEnd = ot > 0 ? Math.min(countedEnd, sched.end) : countedEnd;
     const std = Math.max(0, (stdEnd - countedStart) / 3600000);
-    const ot = Math.max(0, (countedEnd - sched.end) / 3600000);
     standard[d] = Math.round(std * 100) / 100;
     overtime[d] = Math.round(ot * 100) / 100;
   }
