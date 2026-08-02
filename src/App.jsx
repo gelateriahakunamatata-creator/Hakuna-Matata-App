@@ -1425,4 +1425,3 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule 
     </div>
   );
 }
-c
