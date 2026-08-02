@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useCallback } from "react";
-import { Plus, X, Clock, Users, Settings, ChevronLeft, Check, Trash2, Download, Calendar as CalendarIcon } from "lucide-react";
+import { Plus, X, Clock, Users, Settings, ChevronLeft, Check, Trash2, Download, Calendar as CalendarIcon, Pencil } from "lucide-react";
 import { storage } from "./storage";
 const ICON_DATA_URL = "";
 const LOGO_DATA_URL = "";
@@ -379,6 +379,7 @@ export default function App() {
   const [toast, setToast] = useState(null);
   const [newEmp, setNewEmp] = useState({ name: "", store: "origini", pin: "", flexible: false, contractHours: "" });
   const [addingEmp, setAddingEmp] = useState(false);
+  const [editEmp, setEditEmp] = useState(null); // draft { id, name, store, pin, flexible, contractHours } of employee being edited
   const [myHoursTarget, setMyHoursTarget] = useState(null); // employee whose PIN matched
   const [myHoursPinError, setMyHoursPinError] = useState("");
 
@@ -540,6 +541,10 @@ export default function App() {
 
   const removeEmployee = async (id) => {
     await saveEmployees(employees.filter((e) => e.id !== id));
+  };
+
+  const updateEmployee = async (id, changes) => {
+    await saveEmployees(employees.map((e) => (e.id === id ? { ...e, ...changes } : e)));
   };
 
   if (loading) {
@@ -739,32 +744,136 @@ export default function App() {
             {employees.length === 0 && (
               <p className="text-sm font-normal text-center py-4" style={{ color: "#000" }}>Nessun dipendente ancora. Aggiungine uno qui sotto.</p>
             )}
-            {employees.map((emp) => (
-              <div key={emp.id} className="rounded-2xl p-3.5 flex items-center justify-between" style={{ background: "#fff", border: `2px solid ${C.sandDeep}` }}>
-                <div className="flex items-center gap-2.5">
-                  <span
-                    className="w-3 h-3 rounded-full flex-shrink-0"
-                    style={{ background: employeeColor(emp.id) }}
+            {employees.map((emp) =>
+              editEmp && editEmp.id === emp.id ? (
+                <div key={emp.id} className="rounded-2xl p-4 space-y-3" style={{ background: "#fff", border: `2px solid ${C.sandDeep}` }}>
+                  <input
+                    autoFocus
+                    value={editEmp.name}
+                    onChange={(e) => setEditEmp((v) => ({ ...v, name: e.target.value }))}
+                    placeholder="Nome"
+                    className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
+                    style={{ background: C.sand, color: "#000" }}
                   />
-                  <div>
-                    <p className="font-normal text-sm" style={{ color: "#000" }}>{emp.name}</p>
-                    <p className="text-[11px] font-normal" style={{ color: "#000" }}>
-                      {STORE_META[emp.store].label} · PIN {emp.pin}
-                      {emp.flexible ? " · Orario libero" : ""}
-                      {emp.contractHours ? ` · ${emp.contractHours}h/sett. da contratto` : ""}
-                    </p>
+                  <div className="flex gap-2">
+                    {Object.entries(STORE_META).map(([key, meta]) => (
+                      <button
+                        key={key}
+                        onClick={() => setEditEmp((v) => ({ ...v, store: key }))}
+                        className="flex-1 py-2 rounded-xl font-normal text-xs"
+                        style={{
+                          background: editEmp.store === key ? C.espresso : C.sand,
+                          color: editEmp.store === key ? C.sandLight : "#000",
+                        }}
+                      >
+                        {meta.label}
+                      </button>
+                    ))}
+                  </div>
+                  <input
+                    value={editEmp.pin}
+                    onChange={(e) => setEditEmp((v) => ({ ...v, pin: e.target.value.replace(/\D/g, "").slice(0, 4) }))}
+                    placeholder="PIN a 4 cifre"
+                    inputMode="numeric"
+                    className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
+                    style={{ background: C.sand, color: "#000" }}
+                  />
+                  <input
+                    value={editEmp.contractHours}
+                    onChange={(e) => setEditEmp((v) => ({ ...v, contractHours: e.target.value.replace(/[^0-9.]/g, "") }))}
+                    placeholder="Ore da contratto a settimana (facoltativo)"
+                    inputMode="decimal"
+                    className="w-full px-3 py-2 rounded-xl font-normal text-sm outline-none"
+                    style={{ background: C.sand, color: "#000" }}
+                  />
+                  <label className="flex items-center gap-2.5 px-1 py-1">
+                    <input
+                      type="checkbox"
+                      checked={editEmp.flexible}
+                      onChange={(e) => setEditEmp((v) => ({ ...v, flexible: e.target.checked }))}
+                      className="w-4 h-4"
+                    />
+                    <span className="text-xs font-normal" style={{ color: "#000" }}>
+                      Orario libero (es. laboratorio): niente turni fissi, le ore timbrate contano sempre come standard
+                    </span>
+                  </label>
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setEditEmp(null)}
+                      className="flex-1 py-2 rounded-xl font-normal text-sm"
+                      style={{ background: C.sand, color: "#000" }}
+                    >
+                      Annulla
+                    </button>
+                    <button
+                      onClick={async () => {
+                        if (!editEmp.name.trim() || editEmp.pin.length !== 4) return;
+                        await updateEmployee(emp.id, {
+                          name: editEmp.name.trim(),
+                          store: editEmp.store,
+                          pin: editEmp.pin,
+                          flexible: editEmp.flexible,
+                          contractHours: editEmp.contractHours ? Number(editEmp.contractHours) : null,
+                        });
+                        setEditEmp(null);
+                      }}
+                      disabled={!editEmp.name.trim() || editEmp.pin.length !== 4}
+                      className="flex-1 py-2 rounded-xl font-normal text-sm disabled:opacity-40"
+                      style={{ background: C.espresso, color: C.sandLight }}
+                    >
+                      Salva
+                    </button>
                   </div>
                 </div>
-                <button onClick={() => removeEmployee(emp.id)} className="p-2 rounded-full" style={{ background: C.sand }}>
-                  <Trash2 size={15} color={C.terracotta} />
-                </button>
-              </div>
-            ))}
+              ) : (
+                <div key={emp.id} className="rounded-2xl p-3.5 flex items-center justify-between" style={{ background: "#fff", border: `2px solid ${C.sandDeep}` }}>
+                  <div className="flex items-center gap-2.5">
+                    <span
+                      className="w-3 h-3 rounded-full flex-shrink-0"
+                      style={{ background: employeeColor(emp.id) }}
+                    />
+                    <div>
+                      <p className="font-normal text-sm" style={{ color: "#000" }}>{emp.name}</p>
+                      <p className="text-[11px] font-normal" style={{ color: "#000" }}>
+                        {STORE_META[emp.store].label} · PIN {emp.pin}
+                        {emp.flexible ? " · Orario libero" : ""}
+                        {emp.contractHours ? ` · ${emp.contractHours}h/sett. da contratto` : ""}
+                      </p>
+                    </div>
+                  </div>
+                  <div className="flex gap-1.5">
+                    <button
+                      onClick={() => {
+                        setAddingEmp(false);
+                        setEditEmp({
+                          id: emp.id,
+                          name: emp.name,
+                          store: emp.store,
+                          pin: emp.pin,
+                          flexible: !!emp.flexible,
+                          contractHours: emp.contractHours ? String(emp.contractHours) : "",
+                        });
+                      }}
+                      className="p-2 rounded-full"
+                      style={{ background: C.sand }}
+                    >
+                      <Pencil size={15} color={C.espresso} />
+                    </button>
+                    <button onClick={() => removeEmployee(emp.id)} className="p-2 rounded-full" style={{ background: C.sand }}>
+                      <Trash2 size={15} color={C.terracotta} />
+                    </button>
+                  </div>
+                </div>
+              )
+            )}
           </div>
 
           {!addingEmp ? (
             <button
-              onClick={() => setAddingEmp(true)}
+              onClick={() => {
+                setEditEmp(null);
+                setAddingEmp(true);
+              }}
               className="w-full mt-4 py-3 rounded-2xl font-normal text-sm flex items-center justify-center gap-2"
               style={{ background: C.sandLight, color: "#000", border: `2px dashed ${C.sandDeep}` }}
             >
