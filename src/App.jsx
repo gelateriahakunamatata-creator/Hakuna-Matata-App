@@ -186,6 +186,30 @@ function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
     });
   return bounds;
 }
+// Se in questo momento il dipendente sta lavorando un turno a calendario non
+// ancora finito, restituisce l'orario (timestamp) di fine turno — altrimenti
+// null. Guarda sia i turni datati oggi sia quelli datati ieri che sconfinano
+// oltre mezzanotte, così un turno notturno resta valido anche dopo le 00:00.
+function activeScheduledShiftEnd(shifts, employeeId, nowTs) {
+  const todayIso = isoDay(nowTs);
+  const yesterdayIso = isoDay(nowTs - 24 * 60 * 60000);
+  let latestEnd = null;
+  (shifts || [])
+    .filter((s) => s.employeeId === employeeId && (s.day === todayIso || s.day === yesterdayIso))
+    .forEach((s) => {
+      const [y, m, d] = s.day.split("-").map(Number);
+      const dayStartTs = dayTs(y, m - 1, d);
+      const [sh, sm] = s.start.split(":").map(Number);
+      const [eh, em] = s.end.split(":").map(Number);
+      let startTs = dayStartTs + (sh * 60 + sm) * 60000;
+      let endTs = dayStartTs + (eh * 60 + em) * 60000;
+      if (endTs <= startTs) endTs += 24 * 60 * 60000;
+      if (nowTs >= startTs && nowTs < endTs && (latestEnd === null || endTs > latestEnd)) {
+        latestEnd = endTs;
+      }
+    });
+  return latestEnd;
+}
 // Le ore lavorate si contano SEMPRE a partire dall'orario di inizio turno a
 // calendario, mai da un ingresso anticipato: chi timbra prima non fa guadagnare
 // né ore standard né straordinario per quei minuti, restano semplicemente fuori
@@ -531,10 +555,18 @@ export default function App() {
       setPinError("PIN errato, riprova");
       return;
     }
-    setPinError("");
     const last = lastPunchFor(emp.id);
     const type = !last || last.type === "out" ? "in" : "out";
-    const entry = { id: uid(), employeeId: emp.id, type, timestamp: Date.now() };
+    const now = Date.now();
+    if (type === "out" && !emp.flexible) {
+      const shiftEnd = activeScheduledShiftEnd(shifts, emp.id, now);
+      if (shiftEnd && now < shiftEnd) {
+        setPinError(`Il turno finisce alle ${fmtTime(shiftEnd)}: non puoi ancora timbrare l'uscita`);
+        return;
+      }
+    }
+    setPinError("");
+    const entry = { id: uid(), employeeId: emp.id, type, timestamp: now };
     await savePunches([...punches, entry]);
     setPinTarget(null);
     showToast(`${emp.name} — timbrata${type === "in" ? " IN" : " OUT"} alle ${fmtTime(entry.timestamp)}`);
