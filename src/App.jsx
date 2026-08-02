@@ -245,27 +245,6 @@ function PatternBg() {
   );
 }
 
-function ConeMark({ size = 40 }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 64 64" fill="none">
-      <path
-        d="M27 6c-3 0-3 6 2 6"
-        stroke={C.espresso}
-        strokeWidth="3.2"
-        strokeLinecap="round"
-      />
-      <circle cx="36" cy="20" r="12" fill="none" stroke={C.espresso} strokeWidth="3.2" />
-      <circle cx="36" cy="20" r="12" fill={C.sandLight} opacity="0.001" />
-      <circle cx="34" cy="22" r="3.4" fill="none" stroke={C.espresso} strokeWidth="2.6" />
-      <path d="M36 32 L36 58" stroke={C.espresso} strokeWidth="3.2" strokeLinecap="round" />
-      <path d="M22 34 L50 34 L36 58 Z" fill="none" stroke={C.espresso} strokeWidth="3.2" strokeLinejoin="round" />
-      <path d="M25 37 L47 37" stroke={C.espresso} strokeWidth="1.4" opacity="0.6" />
-      <path d="M27 41 L45 41" stroke={C.espresso} strokeWidth="1.4" opacity="0.6" />
-      <path d="M29 45 L42 45" stroke={C.espresso} strokeWidth="1.4" opacity="0.6" />
-    </svg>
-  );
-}
-
 // ---- PIN pad ----
 function PinPad({ title, subtitle, length = 4, onSubmit, onCancel, error }) {
   const [val, setVal] = useState("");
@@ -506,7 +485,7 @@ export default function App() {
     return (
       <div className="min-h-screen flex items-center justify-center" style={{ background: C.sand }}>
         <div className="text-center">
-          <div className="animate-pulse mx-auto mb-2"><ConeMark size={48} /></div>
+          <img src="/icon-mark.png" alt="" className="animate-pulse mx-auto mb-2" style={{ height: 56, width: "auto" }} />
           <p className="font-normal text-sm" style={{ color: "#000" }}>Caricamento…</p>
         </div>
       </div>
