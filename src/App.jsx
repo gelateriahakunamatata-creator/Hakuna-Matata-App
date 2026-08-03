@@ -405,6 +405,67 @@ function PinPad({ title, subtitle, length = 4, onSubmit, onCancel, error }) {
   );
 }
 
+// Dopo il PIN, il dipendente scieglie esplicitamente ingresso o uscita e
+// conferma con un Sì/No, invece di lasciare che il sistema indovini il tipo
+// dall'ultima timbratura registrata.
+function PunchChoice({ employee, type, error, onChooseIn, onChooseOut, onConfirm, onCancelConfirm, onClose }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: "rgba(43,24,16,0.55)" }}>
+      <div className="w-full max-w-xs rounded-3xl p-6" style={{ background: C.sandLight, border: `3px solid ${C.espresso}` }}>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-normal" style={{ color: "#000" }}>{employee.name}</h3>
+          <button onClick={onClose} className="p-1.5 rounded-full" style={{ background: C.sand }}>
+            <X size={18} color={C.espresso} />
+          </button>
+        </div>
+        {type === null ? (
+          <>
+            {error && <p className="text-center text-sm font-normal mb-3" style={{ color: C.terracotta }}>{error}</p>}
+            <div className="space-y-2.5">
+              <button
+                onClick={onChooseIn}
+                className="w-full py-3.5 rounded-2xl font-normal text-sm"
+                style={{ background: C.sky, color: "#000" }}
+              >
+                Timbra Ingresso
+              </button>
+              <button
+                onClick={onChooseOut}
+                className="w-full py-3.5 rounded-2xl font-normal text-sm"
+                style={{ background: C.espresso, color: C.sandLight }}
+              >
+                Timbra Uscita
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <p className="text-center text-sm font-normal mb-4" style={{ color: "#000" }}>
+              Vuoi timbrare {type === "in" ? "l'ingresso" : "l'uscita"}?
+            </p>
+            <div className="flex gap-2.5">
+              <button
+                onClick={onCancelConfirm}
+                className="flex-1 py-2.5 rounded-xl font-normal text-sm"
+                style={{ background: C.sand, color: "#000" }}
+              >
+                No
+              </button>
+              <button
+                onClick={onConfirm}
+                className="flex-1 py-2.5 rounded-xl font-normal text-sm"
+                style={{ background: C.espresso, color: C.sandLight }}
+              >
+                Sì
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function dayTs(y, m, d) {
   return new Date(y, m, d).getTime();
 }
@@ -425,6 +486,9 @@ export default function App() {
   const [scheduleStore, setScheduleStore] = useState("origini");
   const [pinTarget, setPinTarget] = useState(null); // employee being clocked
   const [pinError, setPinError] = useState("");
+  const [punchTarget, setPunchTarget] = useState(null); // employee who verified PIN, choosing ingresso/uscita
+  const [punchType, setPunchType] = useState(null); // "in" | "out" chosen, awaiting Sì/No confirm
+  const [punchChoiceError, setPunchChoiceError] = useState("");
   const [adminAuthed, setAdminAuthed] = useState(false);
   const [adminErr, setAdminErr] = useState("");
   const [toast, setToast] = useState(null);
@@ -549,27 +613,49 @@ export default function App() {
     setTimeout(() => setToast(null), 2600);
   };
 
-  const handlePinSubmit = async (pin) => {
+  const handlePinSubmit = (pin) => {
     const emp = pinTarget;
     if (pin !== emp.pin) {
       setPinError("PIN errato, riprova");
       return;
     }
-    const last = lastPunchFor(emp.id);
-    const type = !last || last.type === "out" ? "in" : "out";
-    const now = Date.now();
-    if (type === "out" && !emp.flexible) {
-      const shiftEnd = activeScheduledShiftEnd(shifts, emp.id, now);
-      if (shiftEnd && now < shiftEnd) {
-        setPinError(`Il turno finisce alle ${fmtTime(shiftEnd)}: non puoi ancora timbrare l'uscita`);
+    setPinError("");
+    setPinTarget(null);
+    setPunchChoiceError("");
+    setPunchType(null);
+    setPunchTarget(emp);
+  };
+
+  // Il dipendente scegli sempre esplicitamente ingresso o uscita (niente più
+  // toggle automatico basato sull'ultima timbratura): elimina l'ambiguità che
+  // si crea quando una timbratura di troppo, per errore, lascia lo stato
+  // "sbagliato" e la volta dopo il sistema indovina il tipo sbagliato.
+  const choosePunchType = (type) => {
+    if (type === "out" && !punchTarget.flexible) {
+      const shiftEnd = activeScheduledShiftEnd(shifts, punchTarget.id, Date.now());
+      if (shiftEnd && Date.now() < shiftEnd) {
+        setPunchChoiceError(`Il turno finisce alle ${fmtTime(shiftEnd)}: non puoi ancora timbrare l'uscita`);
         return;
       }
     }
-    setPinError("");
-    const entry = { id: uid(), employeeId: emp.id, type, timestamp: now };
+    setPunchChoiceError("");
+    setPunchType(type);
+  };
+
+  const confirmPunch = async () => {
+    const emp = punchTarget;
+    const type = punchType;
+    const entry = { id: uid(), employeeId: emp.id, type, timestamp: Date.now() };
     await savePunches([...punches, entry]);
-    setPinTarget(null);
     showToast(`${emp.name} — timbrata${type === "in" ? " IN" : " OUT"} alle ${fmtTime(entry.timestamp)}`);
+    setPunchTarget(null);
+    setPunchType(null);
+  };
+
+  const closePunchChoice = () => {
+    setPunchTarget(null);
+    setPunchType(null);
+    setPunchChoiceError("");
   };
 
   const handleAdminAuth = (pin) => {
@@ -1168,6 +1254,20 @@ export default function App() {
             setPinTarget(null);
             setPinError("");
           }}
+        />
+      )}
+
+      {/* Scelta ingresso/uscita + conferma, dopo il PIN */}
+      {punchTarget && (
+        <PunchChoice
+          employee={punchTarget}
+          type={punchType}
+          error={punchChoiceError}
+          onChooseIn={() => choosePunchType("in")}
+          onChooseOut={() => choosePunchType("out")}
+          onConfirm={confirmPunch}
+          onCancelConfirm={() => setPunchType(null)}
+          onClose={closePunchChoice}
         />
       )}
 
