@@ -554,6 +554,16 @@ export default function App() {
     return () => link.remove();
   }, []);
 
+  // Ricarica automaticamente un'ora dopo l'apertura, così un tablet/telefono
+  // lasciato aperto tutto il giorno scarica sempre l'ultima versione
+  // pubblicata invece di restare bloccato su quella vecchia in memoria.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      window.location.reload();
+    }, 60 * 60 * 1000);
+    return () => clearTimeout(timer);
+  }, []);
+
   const saveEmployees = async (next) => {
     setEmployees(next);
     try {
