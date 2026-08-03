@@ -221,7 +221,10 @@ function activeScheduledShiftEnd(shifts, employeeId, nowTs) {
 // sono standard e l'eventuale eccedenza è straordinario; di domenica e lunedì
 // è sempre tutto straordinario.
 // In entrambi i casi, uno sforamento sotto i 15 minuti di tolleranza viene
-// perdonato (conta come standard); da 15 minuti in su scatta per intero.
+// perdonato e non conta da nessuna parte (né standard né straordinario): lo
+// standard resta sempre fermo alla soglia (le 6 ore, o l'orario di fine
+// turno), non si allunga con i minuti perdonati. Da 15 minuti in su, invece,
+// tutta l'eccedenza scatta come straordinario.
 const FLEXIBLE_DAILY_STANDARD_HOURS = 6;
 const OVERTIME_GRACE_HOURS = 15 / 60;
 function graceAdjustedOvertime(rawOvertimeHours) {
@@ -245,7 +248,7 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
       const isStandardDay = weekday >= 2 && weekday <= 6; // Mar-Sab
       const rawOt = isStandardDay ? Math.max(0, total - FLEXIBLE_DAILY_STANDARD_HOURS) : total;
       const ot = isStandardDay ? graceAdjustedOvertime(rawOt) : rawOt;
-      const std = isStandardDay ? total - ot : 0;
+      const std = isStandardDay ? Math.min(total, FLEXIBLE_DAILY_STANDARD_HOURS) : 0;
       standard[d] = Math.round(std * 100) / 100;
       overtime[d] = Math.round(ot * 100) / 100;
       continue;
@@ -268,7 +271,7 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
     }
     const rawOt = Math.max(0, (countedEnd - sched.end) / 3600000);
     const ot = graceAdjustedOvertime(rawOt);
-    const stdEnd = ot > 0 ? Math.min(countedEnd, sched.end) : countedEnd;
+    const stdEnd = Math.min(countedEnd, sched.end);
     const std = Math.max(0, (stdEnd - countedStart) / 3600000);
     standard[d] = Math.round(std * 100) / 100;
     overtime[d] = Math.round(ot * 100) / 100;
