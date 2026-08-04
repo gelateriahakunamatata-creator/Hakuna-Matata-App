@@ -145,22 +145,20 @@ function shiftPlannedHours(start, end) {
   if (endMin <= startMin) endMin += 24 * 60;
   return Math.round(((endMin - startMin) / 60) * 100) / 100;
 }
-// Actual clock-in / clock-out timestamps per calendar day, from the punches —
-// takes the earliest "in" and the latest "out" of that day (keyed to the day the
-// shift started on).
-function actualBoundsForMonth(punches, employeeId, monthStartTs) {
-  const bounds = {};
+// Le timbrature effettive di un dipendente per giorno di calendario, come
+// elenco di intervalli separati (non un unico blocco min-inizio/max-fine):
+// così chi fa due turni nello stesso giorno (es. mattina e sera) non si vede
+// contare come "lavorata" anche la pausa in mezzo.
+function actualShiftsForMonth(punches, employeeId, monthStartTs) {
+  const byDay = {};
   shiftsFor(punches, employeeId).forEach((s) => {
     if (startOfMonth(s.in) !== monthStartTs) return;
     const day = new Date(s.in).getDate();
-    if (!bounds[day]) {
-      bounds[day] = { start: s.in, end: s.out };
-    } else {
-      bounds[day].start = Math.min(bounds[day].start, s.in);
-      bounds[day].end = Math.max(bounds[day].end, s.out);
-    }
+    if (!byDay[day]) byDay[day] = [];
+    byDay[day].push({ start: s.in, end: s.out });
   });
-  return bounds;
+  Object.values(byDay).forEach((list) => list.sort((a, b) => a.start - b.start));
+  return byDay;
 }
 // Le singole timbrature (non aggregate) di un dipendente in un giorno di
 // calendario, in ordine cronologico — usato in Presenze per poter correggere
@@ -171,10 +169,12 @@ function punchesForDay(punches, employeeId, dayStartTs) {
     .filter((p) => p.employeeId === employeeId && p.timestamp >= dayStartTs && p.timestamp < dayEnd)
     .sort((a, b) => a.timestamp - b.timestamp);
 }
-// Scheduled clock-in / clock-out timestamps per calendar day, from the shifts
-// assigned in Gestione → Turni — this is the "orario da calendario" reference.
-function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
-  const bounds = {};
+// I turni a calendario di un dipendente per giorno, come elenco di intervalli
+// separati — stesso motivo di actualShiftsForMonth: due turni nello stesso
+// giorno non vanno fusi in un unico blocco, altrimenti il buco in mezzo
+// sembrerebbe parte dell'orario di lavoro previsto.
+function scheduledShiftsForMonth(shifts, employeeId, monthStartTs) {
+  const byDay = {};
   (shifts || [])
     .filter((s) => s.employeeId === employeeId)
     .forEach((s) => {
@@ -186,14 +186,11 @@ function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
       let startTs = dayStartTs + (sh * 60 + sm) * 60000;
       let endTs = dayStartTs + (eh * 60 + em) * 60000;
       if (endTs <= startTs) endTs += 24 * 60 * 60000;
-      if (!bounds[d]) {
-        bounds[d] = { start: startTs, end: endTs };
-      } else {
-        bounds[d].start = Math.min(bounds[d].start, startTs);
-        bounds[d].end = Math.max(bounds[d].end, endTs);
-      }
+      if (!byDay[d]) byDay[d] = [];
+      byDay[d].push({ start: startTs, end: endTs });
     });
-  return bounds;
+  Object.values(byDay).forEach((list) => list.sort((a, b) => a.start - b.start));
+  return byDay;
 }
 // Se in questo momento il dipendente sta lavorando un turno a calendario non
 // ancora finito, restituisce l'orario (timestamp) di fine turno — altrimenti
@@ -239,20 +236,19 @@ const OVERTIME_GRACE_HOURS = 15 / 60;
 function graceAdjustedOvertime(rawOvertimeHours) {
   return rawOvertimeHours < OVERTIME_GRACE_HOURS ? 0 : rawOvertimeHours;
 }
-function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexible, monthStartTs) {
+function splitStandardOvertime(actualShiftsByDay, scheduledShiftsByDay, totalDays, flexible, monthStartTs) {
   const standard = {};
   const overtime = {};
   const monthDate = monthStartTs != null ? new Date(monthStartTs) : null;
   for (let d = 1; d <= totalDays; d++) {
-    const act = actualBounds[d];
-    const sched = scheduledBounds[d];
-    if (!act) {
+    const actSegments = actualShiftsByDay[d] || [];
+    if (actSegments.length === 0) {
       standard[d] = 0;
       overtime[d] = 0;
       continue;
     }
     if (flexible) {
-      const total = Math.max(0, (act.end - act.start) / 3600000);
+      const total = actSegments.reduce((sum, seg) => sum + Math.max(0, (seg.end - seg.start) / 3600000), 0);
       const weekday = new Date(monthDate.getFullYear(), monthDate.getMonth(), d).getDay(); // 0=Dom, 1=Lun, ..., 6=Sab
       const isStandardDay = weekday >= 2 && weekday <= 6; // Mar-Sab
       const rawOt = isStandardDay ? Math.max(0, total - FLEXIBLE_DAILY_STANDARD_HOURS) : total;
@@ -262,28 +258,43 @@ function splitStandardOvertime(actualBounds, scheduledBounds, totalDays, flexibl
       overtime[d] = Math.round(ot * 100) / 100;
       continue;
     }
-    if (!sched) {
-      // Nessun turno a calendario: tutto il tempo timbrato è straordinario.
-      const total = Math.max(0, (act.end - act.start) / 3600000);
-      standard[d] = 0;
-      overtime[d] = Math.round(total * 100) / 100;
-      continue;
-    }
-    // L'inizio del conteggio è il MASSIMO tra l'orario di inizio a calendario e
-    // l'ingresso reale: se timbra prima, quei minuti restano fuori.
-    const countedStart = Math.max(act.start, sched.start);
-    const countedEnd = act.end;
-    if (countedEnd <= countedStart) {
-      standard[d] = 0;
-      overtime[d] = 0;
-      continue;
-    }
-    const rawOt = Math.max(0, (countedEnd - sched.end) / 3600000);
-    const ot = graceAdjustedOvertime(rawOt);
-    const stdEnd = Math.min(countedEnd, sched.end);
-    const std = Math.max(0, (stdEnd - countedStart) / 3600000);
-    standard[d] = Math.round(std * 100) / 100;
-    overtime[d] = Math.round(ot * 100) / 100;
+    // Con più turni nello stesso giorno, ogni timbratura effettiva viene
+    // confrontata con il turno a calendario con cui si sovrappone di più
+    // (non con "il" turno del giorno, che potrebbe non esistere più al
+    // singolare), e i risultati si sommano — così il buco tra un turno e
+    // l'altro non viene mai contato.
+    const schedSegments = scheduledShiftsByDay[d] || [];
+    let daySumStd = 0;
+    let daySumOt = 0;
+    actSegments.forEach((act) => {
+      let bestSched = null;
+      let bestOverlap = 0;
+      schedSegments.forEach((sched) => {
+        const overlap = Math.min(act.end, sched.end) - Math.max(act.start, sched.start);
+        if (overlap > bestOverlap) {
+          bestOverlap = overlap;
+          bestSched = sched;
+        }
+      });
+      if (!bestSched) {
+        // Nessun turno a calendario sovrapposto: questa timbratura è tutta straordinario.
+        daySumOt += Math.max(0, (act.end - act.start) / 3600000);
+        return;
+      }
+      // L'inizio del conteggio è il MASSIMO tra l'orario di inizio a calendario
+      // e l'ingresso reale: se timbra prima, quei minuti restano fuori.
+      const countedStart = Math.max(act.start, bestSched.start);
+      const countedEnd = act.end;
+      if (countedEnd <= countedStart) return;
+      const rawOt = Math.max(0, (countedEnd - bestSched.end) / 3600000);
+      const ot = graceAdjustedOvertime(rawOt);
+      const stdEnd = Math.min(countedEnd, bestSched.end);
+      const std = Math.max(0, (stdEnd - countedStart) / 3600000);
+      daySumStd += std;
+      daySumOt += ot;
+    });
+    standard[d] = Math.round(daySumStd * 100) / 100;
+    overtime[d] = Math.round(daySumOt * 100) / 100;
   }
   return { standard, overtime };
 }
@@ -303,10 +314,10 @@ function weeklyTotalsForMonth(standard, overtime, monthStartTs, totalDays) {
     .sort((a, b) => a.weekStart - b.weekStart);
 }
 function exportEmployeeMonthCSV(employee, punches, shifts, monthStartTs) {
-  const actualBounds = actualBoundsForMonth(punches, employee.id, monthStartTs);
-  const scheduledBounds = scheduledBoundsForMonth(shifts, employee.id, monthStartTs);
+  const actualShifts = actualShiftsForMonth(punches, employee.id, monthStartTs);
+  const scheduledShifts = scheduledShiftsForMonth(shifts, employee.id, monthStartTs);
   const total = daysInMonth(monthStartTs);
-  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible, monthStartTs);
+  const { standard, overtime } = splitStandardOvertime(actualShifts, scheduledShifts, total, employee.flexible, monthStartTs);
   const monthDate = new Date(monthStartTs);
   const rows = ["Giorno;Ore standard;Straordinari;Totale"];
   let sumStd = 0;
@@ -1701,10 +1712,10 @@ function WeeklyContractComparison({ standard, overtime, monthStart, total, contr
 
 function MyHoursView({ employee, punches, shifts, onBack }) {
   const [monthStart, setMonthStart] = useState(startOfMonth(Date.now()));
-  const actualBounds = actualBoundsForMonth(punches, employee.id, monthStart);
-  const scheduledBounds = scheduledBoundsForMonth(shifts, employee.id, monthStart);
+  const actualShifts = actualShiftsForMonth(punches, employee.id, monthStart);
+  const scheduledShifts = scheduledShiftsForMonth(shifts, employee.id, monthStart);
   const total = daysInMonth(monthStart);
-  const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, employee.flexible, monthStart);
+  const { standard, overtime } = splitStandardOvertime(actualShifts, scheduledShifts, total, employee.flexible, monthStart);
   const workedDays = Array.from({ length: total }, (_, i) => i + 1).filter(
     (d) => (standard[d] || 0) > 0 || (overtime[d] || 0) > 0
   );
@@ -1919,10 +1930,10 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule,
           <p className="text-sm font-normal text-center py-4" style={{ color: "#000" }}>Nessun dipendente configurato.</p>
         )}
         {employees.map((emp) => {
-          const actualBounds = actualBoundsForMonth(punches, emp.id, monthStart);
-          const scheduledBounds = scheduledBoundsForMonth(shifts, emp.id, monthStart);
+          const actualShifts = actualShiftsForMonth(punches, emp.id, monthStart);
+          const scheduledShifts = scheduledShiftsForMonth(shifts, emp.id, monthStart);
           const total = daysInMonth(monthStart);
-          const { standard, overtime } = splitStandardOvertime(actualBounds, scheduledBounds, total, emp.flexible, monthStart);
+          const { standard, overtime } = splitStandardOvertime(actualShifts, scheduledShifts, total, emp.flexible, monthStart);
           const workedDays = Array.from({ length: total }, (_, i) => i + 1).filter(
             (d) => (standard[d] || 0) > 0 || (overtime[d] || 0) > 0
           );
