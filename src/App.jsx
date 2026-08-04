@@ -162,6 +162,15 @@ function actualBoundsForMonth(punches, employeeId, monthStartTs) {
   });
   return bounds;
 }
+// Le singole timbrature (non aggregate) di un dipendente in un giorno di
+// calendario, in ordine cronologico — usato in Presenze per poter correggere
+// o cancellare una timbratura sbagliata.
+function punchesForDay(punches, employeeId, dayStartTs) {
+  const dayEnd = dayStartTs + 24 * 60 * 60000;
+  return punches
+    .filter((p) => p.employeeId === employeeId && p.timestamp >= dayStartTs && p.timestamp < dayEnd)
+    .sort((a, b) => a.timestamp - b.timestamp);
+}
 // Scheduled clock-in / clock-out timestamps per calendar day, from the shifts
 // assigned in Gestione → Turni — this is the "orario da calendario" reference.
 function scheduledBoundsForMonth(shifts, employeeId, monthStartTs) {
@@ -582,6 +591,14 @@ export default function App() {
     } catch (err) {
       console.error("save punches failed", err);
     }
+  };
+  // Solo l'admin (dietro il PIN di Gestione) può correggere o cancellare una
+  // timbratura già registrata — i dipendenti non hanno mai accesso a questo.
+  const updatePunchTime = async (id, timestamp) => {
+    await savePunches(punches.map((p) => (p.id === id ? { ...p, timestamp } : p)));
+  };
+  const deletePunch = async (id) => {
+    await savePunches(punches.filter((p) => p.id !== id));
   };
   const saveAdminPin = async (pin) => {
     setAdminPin(pin);
@@ -1144,7 +1161,16 @@ export default function App() {
 
       {/* REPORT */}
       {screen === "report" && adminAuthed && (
-        <ReportView employees={employees} punches={punches} shifts={shifts} onBackToAdmin={() => setScreen("admin")} onGoToSchedule={() => setScreen("schedule-admin")} onAddManualPunch={addManualPunch} />
+        <ReportView
+          employees={employees}
+          punches={punches}
+          shifts={shifts}
+          onBackToAdmin={() => setScreen("admin")}
+          onGoToSchedule={() => setScreen("schedule-admin")}
+          onAddManualPunch={addManualPunch}
+          onUpdatePunchTime={updatePunchTime}
+          onDeletePunch={deletePunch}
+        />
       )}
 
       {/* SCHEDULE - read-only view for employees, opened from the store screen */}
@@ -1736,13 +1762,16 @@ function MyHoursView({ employee, punches, shifts, onBack }) {
   );
 }
 
-function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule, onAddManualPunch }) {
+function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule, onAddManualPunch, onUpdatePunchTime, onDeletePunch }) {
   const [monthStart, setMonthStart] = useState(startOfMonth(Date.now()));
   const [showManual, setShowManual] = useState(false);
   const [manualEmp, setManualEmp] = useState("");
   const [manualDay, setManualDay] = useState(isoDay(Date.now() - 24 * 60 * 60000));
   const [manualStart, setManualStart] = useState("09:00");
   const [manualEnd, setManualEnd] = useState("13:00");
+  const [openDay, setOpenDay] = useState(null); // { empId, day } — timbrature del giorno espanse
+  const [editingPunchId, setEditingPunchId] = useState(null);
+  const [editingPunchTime, setEditingPunchTime] = useState("");
 
   return (
     <div className="relative px-5 pb-16 max-w-md mx-auto">
@@ -1901,15 +1930,103 @@ function ReportView({ employees, punches, shifts, onBackToAdmin, onGoToSchedule,
                     <span className="text-right">Standard</span>
                     <span className="text-right">Straord.</span>
                   </div>
-                  {workedDays.map((d) => (
-                    <div key={d} className="grid grid-cols-3 gap-x-2 text-[11px] font-mono font-normal" style={{ color: "#000" }}>
-                      <span>Giorno {d}</span>
-                      <span className="text-right">{(standard[d] || 0).toFixed(2).replace(".", ",")}</span>
-                      <span className="text-right" style={{ color: overtime[d] > 0 ? C.terracotta : "#000" }}>
-                        {(overtime[d] || 0).toFixed(2).replace(".", ",")}
-                      </span>
-                    </div>
-                  ))}
+                  {workedDays.map((d) => {
+                    const isOpen = openDay && openDay.empId === emp.id && openDay.day === d;
+                    const dayStartTs = dayTs(new Date(monthStart).getFullYear(), new Date(monthStart).getMonth(), d);
+                    const dayPunches = isOpen ? punchesForDay(punches, emp.id, dayStartTs) : [];
+                    return (
+                      <React.Fragment key={d}>
+                        <button
+                          onClick={() => {
+                            setEditingPunchId(null);
+                            setOpenDay(isOpen ? null : { empId: emp.id, day: d });
+                          }}
+                          className="grid grid-cols-3 gap-x-2 text-[11px] font-mono font-normal w-full text-left"
+                          style={{ color: "#000" }}
+                        >
+                          <span style={{ textDecoration: "underline", textDecorationColor: C.sandDeep }}>Giorno {d}</span>
+                          <span className="text-right">{(standard[d] || 0).toFixed(2).replace(".", ",")}</span>
+                          <span className="text-right" style={{ color: overtime[d] > 0 ? C.terracotta : "#000" }}>
+                            {(overtime[d] || 0).toFixed(2).replace(".", ",")}
+                          </span>
+                        </button>
+                        {isOpen && (
+                          <div className="mb-2 mt-1 space-y-1.5 rounded-xl p-2.5" style={{ background: C.sand }}>
+                            {dayPunches.length === 0 && (
+                              <p className="text-[11px] font-normal" style={{ color: "#000" }}>Nessuna timbratura quel giorno.</p>
+                            )}
+                            {dayPunches.map((p) => (
+                              <div key={p.id} className="flex items-center justify-between gap-2">
+                                {editingPunchId === p.id ? (
+                                  <>
+                                    <span className="text-[11px] font-normal" style={{ color: "#000" }}>
+                                      {p.type === "in" ? "Ingresso" : "Uscita"}
+                                    </span>
+                                    <input
+                                      type="time"
+                                      value={editingPunchTime}
+                                      onChange={(e) => setEditingPunchTime(e.target.value)}
+                                      className="px-2 py-1 rounded-lg font-normal text-[11px] outline-none"
+                                      style={{ background: "#fff", color: "#000" }}
+                                    />
+                                    <div className="flex gap-1">
+                                      <button
+                                        onClick={() => setEditingPunchId(null)}
+                                        className="px-2 py-1 rounded-lg font-normal text-[11px]"
+                                        style={{ background: "#fff", color: "#000" }}
+                                      >
+                                        Annulla
+                                      </button>
+                                      <button
+                                        onClick={async () => {
+                                          const [h, m] = editingPunchTime.split(":").map(Number);
+                                          await onUpdatePunchTime(p.id, dayStartTs + (h * 60 + m) * 60000);
+                                          setEditingPunchId(null);
+                                        }}
+                                        className="px-2 py-1 rounded-lg font-normal text-[11px]"
+                                        style={{ background: C.espresso, color: C.sandLight }}
+                                      >
+                                        Salva
+                                      </button>
+                                    </div>
+                                  </>
+                                ) : (
+                                  <>
+                                    <span className="text-[11px] font-normal" style={{ color: "#000" }}>
+                                      {p.type === "in" ? "Ingresso" : "Uscita"} · {fmtTime(p.timestamp)}
+                                    </span>
+                                    <div className="flex gap-1.5">
+                                      <button
+                                        onClick={() => {
+                                          setEditingPunchId(p.id);
+                                          setEditingPunchTime(fmtTime(p.timestamp));
+                                        }}
+                                        className="p-1.5 rounded-full"
+                                        style={{ background: "#fff" }}
+                                      >
+                                        <Pencil size={13} color={C.espresso} />
+                                      </button>
+                                      <button
+                                        onClick={() => {
+                                          if (window.confirm("Cancellare questa timbratura? L'operazione non si può annullare.")) {
+                                            onDeletePunch(p.id);
+                                          }
+                                        }}
+                                        className="p-1.5 rounded-full"
+                                        style={{ background: "#fff" }}
+                                      >
+                                        <Trash2 size={13} color={C.terracotta} />
+                                      </button>
+                                    </div>
+                                  </>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+                      </React.Fragment>
+                    );
+                  })}
                 </div>
               )}
 
