@@ -514,12 +514,12 @@ export default function App() {
     try {
       const [e, p, a, s] = await Promise.allSettled([
         storage.get("hakuna-employees"),
-        storage.get("hakuna-punches"),
+        storage.listPunches(),
         storage.get("hakuna-admin-pin"),
         storage.get("hakuna-shifts"),
       ]);
       setEmployees(e.status === "fulfilled" && e.value ? JSON.parse(e.value.value) : []);
-      setPunches(p.status === "fulfilled" && p.value ? JSON.parse(p.value.value) : []);
+      setPunches(p.status === "fulfilled" ? p.value : []);
       setAdminPin(a.status === "fulfilled" && a.value ? a.value.value : "1234");
       setShifts(s.status === "fulfilled" && s.value ? JSON.parse(s.value.value) : []);
     } catch (err) {
@@ -584,21 +584,43 @@ export default function App() {
       console.error("save employees failed", err);
     }
   };
-  const savePunches = async (next) => {
-    setPunches(next);
+  // Ogni timbratura è una riga a sé nel database (non più un unico blocco con
+  // tutte le timbrature): così se due dispositivi diversi (es. un tablet per
+  // negozio) timbrano quasi nello stesso momento, non rischiano più di
+  // sovrascriversi a vicenda e perdere una timbratura.
+  const addPunch = async (entry) => {
+    setPunches((prev) => [...prev, entry]);
     try {
-      await storage.set("hakuna-punches", JSON.stringify(next));
+      await storage.insertPunch(entry);
     } catch (err) {
-      console.error("save punches failed", err);
+      console.error("insert punch failed", err);
+    }
+  };
+  const addPunches = async (entries) => {
+    setPunches((prev) => [...prev, ...entries]);
+    try {
+      await storage.insertPunches(entries);
+    } catch (err) {
+      console.error("insert punches failed", err);
     }
   };
   // Solo l'admin (dietro il PIN di Gestione) può correggere o cancellare una
   // timbratura già registrata — i dipendenti non hanno mai accesso a questo.
   const updatePunchTime = async (id, timestamp) => {
-    await savePunches(punches.map((p) => (p.id === id ? { ...p, timestamp } : p)));
+    setPunches((prev) => prev.map((p) => (p.id === id ? { ...p, timestamp } : p)));
+    try {
+      await storage.updatePunchTimestamp(id, timestamp);
+    } catch (err) {
+      console.error("update punch failed", err);
+    }
   };
   const deletePunch = async (id) => {
-    await savePunches(punches.filter((p) => p.id !== id));
+    setPunches((prev) => prev.filter((p) => p.id !== id));
+    try {
+      await storage.deletePunch(id);
+    } catch (err) {
+      console.error("delete punch failed", err);
+    }
   };
   const saveAdminPin = async (pin) => {
     setAdminPin(pin);
@@ -630,7 +652,7 @@ export default function App() {
     if (outTs <= inTs) outTs += 24 * 60 * 60000;
     const inEntry = { id: uid(), employeeId, type: "in", timestamp: inTs };
     const outEntry = { id: uid(), employeeId, type: "out", timestamp: outTs };
-    await savePunches([...punches, inEntry, outEntry]);
+    await addPunches([inEntry, outEntry]);
   };
 
   const lastPunchFor = (empId) => {
@@ -676,7 +698,7 @@ export default function App() {
     const emp = punchTarget;
     const type = punchType;
     const entry = { id: uid(), employeeId: emp.id, type, timestamp: Date.now() };
-    await savePunches([...punches, entry]);
+    await addPunch(entry);
     showToast(`${emp.name} — timbrata${type === "in" ? " IN" : " OUT"} alle ${fmtTime(entry.timestamp)}`);
     setPunchTarget(null);
     setPunchType(null);

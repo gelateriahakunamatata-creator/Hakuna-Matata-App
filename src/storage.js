@@ -33,4 +33,42 @@ export const storage = {
     if (error) throw error;
     return { key, value };
   },
+
+  // Le timbrature vivono nella loro tabella dedicata "punches", una riga per
+  // timbratura — non più un unico blocco JSON in kv_store. Con un blocco unico,
+  // due dispositivi che timbrano quasi nello stesso istante (es. un tablet per
+  // negozio) potevano sovrascriversi a vicenda e far perdere una timbratura:
+  // con righe singole ogni inserimento/modifica/cancellazione è indipendente.
+  async listPunches() {
+    const { data, error } = await supabase
+      .from("punches")
+      .select("id, employee_id, type, timestamp")
+      .order("timestamp", { ascending: true });
+    if (error) throw error;
+    return (data || []).map((p) => ({ id: p.id, employeeId: p.employee_id, type: p.type, timestamp: p.timestamp }));
+  },
+
+  async insertPunch(punch) {
+    const { error } = await supabase
+      .from("punches")
+      .insert({ id: punch.id, employee_id: punch.employeeId, type: punch.type, timestamp: punch.timestamp });
+    if (error) throw error;
+  },
+
+  async insertPunches(punchList) {
+    const { error } = await supabase
+      .from("punches")
+      .insert(punchList.map((p) => ({ id: p.id, employee_id: p.employeeId, type: p.type, timestamp: p.timestamp })));
+    if (error) throw error;
+  },
+
+  async updatePunchTimestamp(id, timestamp) {
+    const { error } = await supabase.from("punches").update({ timestamp }).eq("id", id);
+    if (error) throw error;
+  },
+
+  async deletePunch(id) {
+    const { error } = await supabase.from("punches").delete().eq("id", id);
+    if (error) throw error;
+  },
 };
